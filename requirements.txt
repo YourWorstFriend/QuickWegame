@@ -1,0 +1,4 @@
+psutil>=5.9.0
+keyboard>=0.13.5
+pyautogui>=0.9.54
+interception-python>=1.0.0

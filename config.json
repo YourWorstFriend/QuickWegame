@@ -1,0 +1,11 @@
+{
+    "hotkey": "ctrl+alt+k",
+    "processes": [
+        "notepad.exe"
+    ],
+    "show_notification": true,
+    "log_to_file": true,
+    "wegame_path": "C:\\Program Files (x86)\\WeGame\\WeGame.exe",
+    "action_delay": 50,
+    "locate_mode": "coords"
+}
