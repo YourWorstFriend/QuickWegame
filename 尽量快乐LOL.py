@@ -44,16 +44,15 @@ else:
 
 
 # 获取程序所在目录：打包后为 exe 所在目录，开发时为脚本所在目录
-# 注意与 _BUNDLE_DIR 不同：APP_DIR 是用户可见的数据目录，_BUNDLE_DIR 是资源打包目录
 if getattr(sys, 'frozen', False):
-    APP_DIR = os.path.dirname(sys.executable)       # 打包后的 exe 目录
+    APP_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))  # 打包后：exe 实际所在目录
 else:
-    APP_DIR = os.path.dirname(os.path.abspath(__file__))  # 开发时的脚本目录
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))      # 开发时：脚本目录
 
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")      # 主配置文件路径
-ACCOUNTS_PATH = os.path.join(APP_DIR, "账号（accounts）.csv")   # 账号数据文件路径（CSV格式）
+ACCOUNTS_PATH = os.path.join(APP_DIR, "账号(accounts).csv")   # 账号数据文件路径（CSV格式）
 ACCOUNTS_JSON_PATH = os.path.join(APP_DIR, "accounts.json")  # 旧版JSON账号文件路径（用于迁移）
-PROCS_PATH = os.path.join(APP_DIR, "进程（processes）.txt")     # 目标进程列表文件路径
+PROCS_PATH = os.path.join(APP_DIR, "进程(processes).txt")     # 目标进程列表文件路径
 LOG_PATH = os.path.join(APP_DIR, "hotkey_kill.log")     # 日志文件路径
 
 # 加载 Windows 系统 DLL，用于窗口操作和进程管理
@@ -346,8 +345,8 @@ class HotkeyKillApp:
         s.configure("TLabel", font=(FONT_FAMILY, fs))
         s.configure("TEntry", font=(FONT_FAMILY, fs))
         s.configure("TButton", font=(FONT_FAMILY, fs))
-        s.configure("Treeview", font=(FONT_FAMILY, fs), rowheight=max(24, int(36 * scale)))
-        s.configure("Treeview.Heading", font=(FONT_FAMILY, fs))
+        s.configure("Treeview", font=(FONT_FAMILY, fs + 2), rowheight=max(24, int(36 * scale)))
+        s.configure("Treeview.Heading", font=(FONT_FAMILY, fs + 2))
         s.configure("TCheckbutton", font=(FONT_FAMILY, fs))
         self._draw_tabs()
 
@@ -403,6 +402,10 @@ class HotkeyKillApp:
 
         s.configure("TCheckbutton", background=FLUENT["card"], foreground=FLUENT["text"],
                      font=(FONT_FAMILY, 10))
+
+        # 红线占位行样式
+        s.configure("RedLine.Treeview", background=FLUENT["card"], foreground="red",
+                     font=(FONT_FAMILY, 10), rowheight=36)
 
         # 表格：行高 36px，选中行淡橙色
         s.configure("Treeview", background=FLUENT["card"], foreground=FLUENT["text"],
@@ -667,7 +670,7 @@ class HotkeyKillApp:
                  font=(FONT_FAMILY, 10), width=10, anchor="w").pack(side="left")
         self.win_keyword_var = tk.StringVar(value="WeGame")
         ttk.Entry(r1, textvariable=self.win_keyword_var, width=14).pack(side="left", padx=(8, 24))
-        tk.Label(r1, text="操作延迟(ms)", bg=FLUENT["card"], fg=FLUENT["text_sec"],
+        tk.Label(r1, text="按键延迟(ms)", bg=FLUENT["card"], fg=FLUENT["text_sec"],
                  font=(FONT_FAMILY, 10), width=10, anchor="w").pack(side="left")
         self.action_delay_var = tk.StringVar(value="50")
         ttk.Entry(r1, textvariable=self.action_delay_var, width=6).pack(side="left", padx=(8, 0))
@@ -680,15 +683,46 @@ class HotkeyKillApp:
         abody.rowconfigure(0, weight=1)
         abody.columnconfigure(0, weight=1)
 
+        # Treeview 外层容器
+        tree_wrap = tk.Frame(abody, bg=FLUENT["card"])
+        tree_wrap.grid(row=0, column=0, sticky="nsew", padx=(32, 0), pady=(0, 12))
+        tree_wrap.rowconfigure(0, weight=1)
+        tree_wrap.columnconfigure(0, weight=1)
+
         cols = ("account", "password", "name")
-        self.acc_tree = ttk.Treeview(abody, columns=cols, show="headings", height=10)
+        self.acc_tree = ttk.Treeview(tree_wrap, columns=cols, show="headings", height=10)
         self.acc_tree.heading("account", text="账号")
         self.acc_tree.heading("password", text="密码")
         self.acc_tree.heading("name", text="备注")
-        self.acc_tree.column("account", width=180, minwidth=150)
-        self.acc_tree.column("password", width=180, minwidth=150)
-        self.acc_tree.column("name", width=160, minwidth=120)
-        self.acc_tree.grid(row=0, column=0, sticky="nsew", padx=(32, 0), pady=(0, 12))
+        self.acc_tree.column("account", width=180, minwidth=150, anchor="center")
+        self.acc_tree.column("password", width=180, minwidth=150, anchor="center")
+        self.acc_tree.column("name", width=160, minwidth=120, anchor="center")
+        self.acc_tree.grid(row=0, column=0, sticky="nsew")
+        self.acc_tree.tag_configure("redline", foreground="red")
+
+        # 覆盖层 Canvas：需要时才显示，平时隐藏不拦截事件
+        self._overlay_canvas = tk.Canvas(tree_wrap, bg=FLUENT["card"],
+                                         highlightthickness=0, bd=0)
+        self._overlay_canvas.place_forget()  # 初始隐藏
+
+        # 滚动反弹状态
+        self._bounce_animating = False
+
+        def on_mousewheel(event):
+            if hasattr(self, '_red_line_iid'):
+                bbox = self.acc_tree.bbox(self._red_line_iid)
+                if bbox and event.delta < 0:
+                    # 红线已可见且向下滚动：触发反弹
+                    self._do_bounce(event.delta)
+                    return
+            self.acc_tree.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            self.root.after(10, self._update_tree_overlay)
+
+        def on_tree_configure(event):
+            self.root.after(100, self._update_tree_overlay)
+
+        self.acc_tree.bind("<MouseWheel>", on_mousewheel)
+        tree_wrap.bind("<Configure>", on_tree_configure)
 
         abtn = tk.Frame(abody, bg=FLUENT["card"])
         abtn.grid(row=1, column=0, sticky="w", padx=(32, 0))
@@ -729,6 +763,70 @@ class HotkeyKillApp:
             highlightthickness=0, wrap="word", width=26)
         self.wegame_log.grid(row=1, column=0, sticky="nsew")
 
+    def _get_visible_rows(self):
+        """获取 Treeview 可视区域能显示的行数"""
+        if not hasattr(self, 'acc_tree'):
+            return 10
+        h = self.acc_tree.winfo_height()
+        row_h = 36  # 与 style 中 rowheight 一致
+        return max(1, h // row_h)
+
+    def _update_tree_overlay(self):
+        """永久遮罩：始终覆盖可视区最后一行的下半截"""
+        if not hasattr(self, '_overlay_canvas'):
+            return
+        self._overlay_canvas.delete("all")
+        children = self.acc_tree.get_children()
+        if not children:
+            self._overlay_canvas.place_forget()
+            return
+
+        tree_h = self.acc_tree.winfo_height()
+        tree_w = self.acc_tree.winfo_width()
+        row_h = 36
+        clip_h = row_h // 2
+
+        # 遮罩永久存在：覆盖可视区底部半行
+        self._overlay_canvas.place(x=0, y=tree_h - clip_h, relwidth=1.0, height=clip_h)
+        self._overlay_canvas.create_rectangle(0, 0, tree_w, clip_h,
+                                               fill=FLUENT["card"], outline="")
+        # 透传鼠标事件
+        self._overlay_canvas.bind("<Button-1>", lambda e: self.acc_tree.event_generate("<Button-1>", x=e.x, y=e.y + (tree_h - clip_h)))
+        self._overlay_canvas.bind("<Double-Button-1>", lambda e: self.acc_tree.event_generate("<Double-Button-1>", x=e.x, y=e.y + (tree_h - clip_h)))
+        self._overlay_canvas.bind("<MouseWheel>", lambda e: self.acc_tree.event_generate("<MouseWheel>", delta=e.delta))
+
+    def _do_bounce(self, delta):
+        """滚动反弹：小幅弹跳，弹回后红线仍可见"""
+        if self._bounce_animating:
+            return
+        self._bounce_animating = True
+        direction = 1 if delta > 0 else -1
+
+        # 记录当前滚动位置
+        cur_pos = self.acc_tree.yview()[0]
+
+        # 临时添加 3 行空行制造滚动空间
+        temp_ids = []
+        for _ in range(3):
+            tid = self.acc_tree.insert("", tk.END, values=("", "", ""))
+            temp_ids.append(tid)
+
+        # 小幅弹出
+        offset = cur_pos + 0.03 * direction
+        self.acc_tree.yview_moveto(max(0, min(1, offset)))
+
+        def snap_back():
+            # 弹回到原位置（红线仍可见）
+            self.acc_tree.yview_moveto(cur_pos)
+            for tid in temp_ids:
+                try:
+                    self.acc_tree.delete(tid)
+                except Exception:
+                    pass
+            self._bounce_animating = False
+            self.root.after(50, self._update_tree_overlay)
+        self.root.after(120, snap_back)
+
     def _wlog(self, msg):
         """向 WeGame 日志区域追加一行带时间戳的日志"""
         try:
@@ -758,10 +856,10 @@ class HotkeyKillApp:
         self.accounts = load_accounts()
         for acc in self.accounts:
             self.acc_tree.insert("", tk.END, values=(acc.get("account", ""), acc.get("password", ""), acc.get("name", "")))
-        # 补充空行使表格至少显示 10 行
-        for _ in range(10 - len(self.accounts)):
-            self.acc_tree.insert("", tk.END, values=("", "", ""))
+        # 插入红线
+        self._refresh_red_line()
         self._update_window_height()
+        self.root.after(300, self._update_tree_overlay)
 
     def _update_window_height(self):
         """根据账号数量动态调整窗口高度，最多不超过屏幕 85%"""
@@ -792,6 +890,30 @@ class HotkeyKillApp:
             "locate_mode": "coords",
         }
         save_config(self.cfg)
+
+    def _refresh_red_line(self):
+        """删除旧红线行，在真实账号下面第三行重新插入"""
+        if hasattr(self, '_red_line_iid'):
+            try:
+                self.acc_tree.delete(self._red_line_iid)
+            except Exception:
+                pass
+        children = self.acc_tree.get_children()
+        real_last_idx = -1
+        for idx, iid in enumerate(children):
+            vals = self.acc_tree.item(iid, "values")
+            if vals[0]:
+                real_last_idx = idx
+        insert_at = real_last_idx + 3
+        while len(self.acc_tree.get_children()) < insert_at:
+            self.acc_tree.insert("", tk.END, values=("", "", ""))
+        # 用连续横线字符确保可见
+        line_text = "━" * 30
+        children = self.acc_tree.get_children()
+        if insert_at < len(children):
+            self._red_line_iid = self.acc_tree.insert("", insert_at, values=("", line_text, ""), tags=("redline",))
+        else:
+            self._red_line_iid = self.acc_tree.insert("", tk.END, values=("", line_text, ""), tags=("redline",))
 
     def _find_account(self, account_id):
         """按账号 ID 在账号列表中查找，返回账号字典或 None"""
@@ -979,6 +1101,7 @@ class HotkeyKillApp:
     def _add_account(self):
         """在账号表格末尾添加一行空行供用户填写"""
         self.acc_tree.insert("", tk.END, values=("", "", ""))
+        self._refresh_red_line()
         self._update_window_height()
 
     def _on_tree_double_click(self, event):
@@ -1038,10 +1161,11 @@ class HotkeyKillApp:
         accounts = []
         for item in self.acc_tree.get_children():
             vals = self.acc_tree.item(item, "values")
-            if vals[0]:  # 只保存有账号的行（跳过空行）
+            if vals[0]:
                 accounts.append({"account": vals[0], "password": vals[1], "name": vals[2]})
         self.accounts = accounts
         save_accounts(accounts)
+        self._refresh_red_line()
 
     def _edit_account(self):
         """弹出编辑对话框修改选中账号的信息"""
@@ -1108,6 +1232,7 @@ class HotkeyKillApp:
                 if new_acc:
                     self.accounts.append({"account": new_acc, "password": new_pwd, "name": new_name})
             save_accounts(self.accounts)
+            self._refresh_red_line()
             dlg.destroy()
 
         FluentButton(btn_frame, text="取消", command=dlg.destroy).pack(side="right", padx=(8, 0))
@@ -1123,9 +1248,7 @@ class HotkeyKillApp:
         # 同步删除 accounts 列表中的对应项
         self.accounts = [a for a in self.accounts if a.get("account") != vals[0]]
         save_accounts(self.accounts)
-        # 保持表格至少显示 10 行
-        if len(self.acc_tree.get_children()) < 10:
-            self.acc_tree.insert("", tk.END, values=("", "", ""))
+        self._refresh_red_line()
         self._update_window_height()
 
     def _import_accounts(self):
@@ -1173,9 +1296,7 @@ class HotkeyKillApp:
                 existing.add(acc["account"])
                 added += 1
             save_accounts(self.accounts)
-            # 补充空行保持至少 10 行
-            while len(self.acc_tree.get_children()) < 10:
-                self.acc_tree.insert("", tk.END, values=("", "", ""))
+            self._refresh_red_line()
             self._update_window_height()
             messagebox.showinfo("导入完成", f"成功导入 {added} 个账号")
         except Exception as e:
